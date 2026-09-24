@@ -1,0 +1,303 @@
+#!/usr/bin/env bash
+# Remembers which commit each /ship phase saw, so a review cannot be outrun by
+# commits that land after it. Called by SKILL.md, which sits beside it.
+#
+# It lives beside SKILL.md because the skill folder is installed or copied as
+# one unit and the helper has to travel with it, and because /ship runs inside
+# a project that knows nothing about where the skill came from. So it sources
+# nothing and carries its own finding().
+set -u
+
+finding() { printf 'finding: %s\n' "$*" >&2; exit 2; }
+die()     { printf 'ship-guard: %s\n' "$*" >&2; exit 1; }
+
+usage="usage: ship-guard open [combined|separate <reason>] | record <phase> | check <phase> | fix-pass | attest | push-ok"
+
+gitdir="$(git rev-parse --absolute-git-dir 2>/dev/null)" \
+  || finding "/ship guard must run inside a git repository"
+branch="$(git symbolic-ref --quiet --short HEAD 2>/dev/null)" \
+  || finding "/ship guard needs a branch; HEAD is detached"
+
+# The file name has to be injective, or two branches share one gate. Encoding %
+# before / is what makes it so: a branch literally named feat%2Fx becomes
+# feat%252Fx and cannot collide with feat/x.
+encoded="$branch"
+encoded="${encoded//%/%25}"
+encoded="${encoded//\//%2F}"
+state="$gitdir/ship-guard/$encoded"
+
+# Every key is a fixed word from this file, never anything a caller supplies.
+kv() {  # $1 key; prints the value, or nothing
+  [ -f "$state" ] || return 0
+  # head closes the pipe when it has its line, and sed reports the failed write
+  # on stderr rather than dying quietly. Read the rest away.
+  sed -n "s/^$1=//p" "$state" | { head -n 1; cat >/dev/null; }
+}
+
+put() {  # $1 key, $2 value
+  local tmp="$state.$$"
+  { grep -v "^$1=" "$state" 2>/dev/null || true; printf '%s=%s\n' "$1" "$2"; } > "$tmp" \
+    || die "cannot write $state"
+  mv "$tmp" "$state" || die "cannot write $state"
+}
+
+drop() {  # $1.. keys
+  local k tmp="$state.$$"
+  cp "$state" "$tmp" || die "cannot write $state"
+  for k in "$@"; do
+    { grep -v "^$k=" "$tmp" 2>/dev/null || true; } > "$tmp.next"
+    mv "$tmp.next" "$tmp" || die "cannot write $state"
+  done
+  mv "$tmp" "$state" || die "cannot write $state"
+}
+
+# The file is untracked and anything running as this account can write it, so
+# what it says about itself is checked before it is believed. That now includes
+# the review mode, which is the one value in here that can make the gate do
+# less: a mode nothing can read is a refusal, never a reading of "combined".
+#
+# mode is set here, once, and every verb below reads that variable rather than
+# the file. One read means the value that is checked is the value that is used.
+mode=""
+require_file() {
+  local v
+  { [ ! -L "$state" ] && [ -f "$state" ]; } \
+    || finding "no guard file for $branch; the gate was never opened"
+  [ "$(kv branch)" = "$branch" ] \
+    || finding "the guard file names $(kv branch), not $branch; open the gate again"
+  v="$(kv version)"
+  case "$v" in
+    # A gate opened before this file knew about modes. It ran the three phases
+    # under the old rule, so it is read under the old rule. Reading it as
+    # combined would retire a security pass that actually happened.
+    1) mode=separate ;;
+    2)
+      mode="$(kv review_mode)"
+      case "$mode" in
+        combined | separate) ;;
+        *) finding "the guard file's review mode is not a mode: $mode; open the gate again" ;;
+      esac ;;
+    *) finding "the guard file's version is $v, which this gate cannot read; open the gate again" ;;
+  esac
+}
+
+valid_mode() {  # $1
+  case "$1" in
+    combined | separate) ;;
+    *) finding "unknown review mode '$1' (combined, separate)" ;;
+  esac
+}
+
+# The phases this gate has to file, in order. A combined review covers
+# correctness and security together, so there is no second pass to record and
+# nothing may record one: an unperformed security phase written down as
+# completed is the single worst thing this file could hold.
+phases() {
+  case "$mode" in
+    combined) printf 'checks review' ;;
+    *)        printf 'checks review security' ;;
+  esac
+}
+
+valid_phase() {  # $1; the spelling, before any file has been read
+  case "$1" in
+    checks | review | security) ;;
+    *) finding "unknown phase '$1' (checks, review, security)" ;;
+  esac
+}
+
+phase_in_mode() {  # $1; the phase this gate actually has, once mode is known
+  case " $(phases) " in
+    *" $1 "*) ;;
+    *) finding "this gate is a combined review; it has no security phase" ;;
+  esac
+}
+
+prev_phase() {  # $1 phase; prints the phase that must precede it, or nothing
+  case "$1" in
+    review) printf checks ;;
+    security) printf review ;;
+  esac
+}
+
+# The reason is free text from the caller and it is written into a key=value
+# file and into JSON. One line, so it cannot forge a second key; the JSON
+# escaping is done where it is printed.
+one_line() {  # $1 text
+  printf '%s' "$1" | LC_ALL=C tr -d '\000-\010\013-\037\177' | tr '\t' ' ' | tr -d '\n' | cut -c1-200
+}
+
+recorded_sha() {  # $1 phase; prints its commit, or refuses
+  local v; v="$(kv "$1")"
+  [ -n "$v" ] || finding "no $1 recorded for $branch; the gate did not run in order"
+  printf '%s' "$v"
+}
+
+require_descends() {  # $1 phase, $2 commit
+  git merge-base --is-ancestor "$2" HEAD 2>/dev/null || finding \
+    "HEAD $(git rev-parse --short HEAD) does not descend from the $1 commit $(git rev-parse --short "$2"); open the gate again"
+}
+
+fix_count() {
+  local n; n="$(kv fix_passes)"
+  case "$n" in
+    # open always writes the line and nothing removes it, so an absent count has
+    # the same provenance as a garbled one: neither is a count of zero.
+    '') finding "the guard file has no fix count; open the gate again" ;;
+    *[!0-9]*) finding "the guard file's fix count is not a number; open the gate again" ;;
+    # A leading zero is digits and arithmetic reads it, so every other caller
+    # would carry on. attest prints the count into JSON unquoted, where 00 is
+    # not a number: the attestation stops parsing and the gate still says it
+    # succeeded, which is the one failure the attestation exists to rule out.
+    0?*) finding "the guard file's fix count has a leading zero: $n; open the gate again" ;;
+  esac
+  printf '%s' "$n"
+}
+
+# A fix nobody committed is a fix the push does not carry, so the reviewers and
+# the suite covered content that is not going out. Untracked files are ignored:
+# a supervised ship worktree carries env files the repository never tracks.
+require_clean() {
+  local out
+  # A git that errors prints nothing, and reading that silence as a clean tree
+  # is the one fail-open this file would have had.
+  out="$(git status --porcelain --untracked-files=no 2>/dev/null)" \
+    || finding "git status failed; cannot prove the worktree is clean"
+  [ -z "$out" ] \
+    || finding "the worktree has uncommitted changes; the push would not carry them"
+}
+
+cmd="${1:-}"; shift || true
+case "$cmd" in
+  # open with no mode is the careful gate. That is not a convenience: a caller
+  # that cannot say which mode it is in has not classified the branch, and the
+  # gate that runs on no classification is the one with the security pass in it.
+  open)
+    case $# in
+      0) want=separate; reason="no classification was recorded" ;;
+      2) want="$1"; reason="$(one_line "$2")"
+         valid_mode "$want"
+         case "$reason" in
+           *[![:space:]]*) ;;
+           *) finding "a review mode needs a reason" ;;
+         esac ;;
+      1) finding "a review mode needs a reason" ;;
+      *) finding "$usage" ;;
+    esac
+    mkdir -p "$gitdir/ship-guard" || die "cannot create $gitdir/ship-guard"
+    { echo "version=2"; echo "branch=$branch"; echo "fix_passes=0"
+      echo "review_mode=$want"; echo "review_reason=$reason"; } > "$state" \
+      || die "cannot write $state"
+    ;;
+
+  record)
+    [ $# -eq 1 ] || finding "$usage"
+    valid_phase "$1"
+    require_file
+    phase_in_mode "$1"
+    require_clean
+    prev="$(prev_phase "$1")"
+    if [ -n "$prev" ]; then
+      prev_sha="$(recorded_sha "$prev")" || exit $?
+      require_descends "$prev" "$prev_sha"
+    fi
+    head_sha="$(git rev-parse HEAD)"
+    # push-ok's refusal says "record it again", and doing literally that with no
+    # fix pass is how the gate gets walked past: the count stays at zero and the
+    # phases behind this one still name the old commit. Repeating the same
+    # commit is harmless, so only a move is refused. The message names the fix
+    # pass and nothing else: open would clear the phases and zero the count,
+    # which is the same dodge by another route.
+    cur="$(kv "$1")"
+    [ -z "$cur" ] || [ "$cur" = "$head_sha" ] || finding \
+      "$1 is already recorded at $(git rev-parse --short "$cur"); recording a new commit needs a fix pass"
+    put "$1" "$head_sha"
+    ;;
+
+  check)
+    [ $# -eq 1 ] || finding "$usage"
+    valid_phase "$1"
+    require_file
+    phase_in_mode "$1"
+    sha="$(recorded_sha "$1")" || exit $?
+    require_descends "$1" "$sha"
+    ;;
+
+  fix-pass)
+    [ $# -eq 0 ] || finding "$usage"
+    require_file
+    n="$(fix_count)" || exit $?
+    [ "$n" -lt 3 ] || finding "three fix passes already; revert to the minimal fix and stop"
+    n=$((n + 1))
+    put fix_passes "$n"
+    # Every phase, including a fix that only answers the security audit: the fix
+    # is code, so the commit going out is code no reviewer has read yet. Keeping
+    # the code review across a security fix left that round unable to push at
+    # all, because push-ok wants every phase at the commit going out.
+    #
+    # The mode is not among them. A fix answers a review; it does not reclassify
+    # the branch, and a gate that could drop back to combined between passes
+    # would be one fix pass away from retiring its own security phase.
+    # shellcheck disable=SC2046
+    drop $(phases)
+    printf 'fix pass %s of 3\n' "$n"
+    ;;
+
+  # The attestation is built here because this file's format has one owner.
+  # It carries the three guard phases and nothing else: step 8 writes it before
+  # pr and ci have happened, and a record claiming a step that has not run is
+  # worse than no record. The guard file is untracked and anything running as
+  # this account can write it, so a phase that is missing or is not a commit id
+  # is a finding rather than an entry left out.
+  attest)
+    [ $# -eq 0 ] || finding "$usage"
+    require_file
+    n="$(fix_count)" || exit $?
+    # One read per phase, and the value that is printed is the value that was
+    # checked. Reading the file again for the printout would mean the checked
+    # value and the printed value are two different reads of a file this script
+    # has already said it does not trust: anything running as this account can
+    # rewrite it in between, and what lands in the attestation is then whatever
+    # the second read saw. That is a small window and the same account could
+    # write a plausible sha with no race at all, so this is not a defence. It is
+    # the file doing what its own comment says it does.
+    steps=""; sep=""
+    for phase in $(phases); do
+      sha="$(recorded_sha "$phase")" || exit $?
+      [ "${#sha}" -eq 40 ] || finding "the $phase commit is not a commit id: $sha"
+      case "$sha" in *[!0-9a-f]*) finding "the $phase commit is not a commit id: $sha" ;; esac
+      steps="$steps$sep{\"step\":\"$phase\",\"status\":\"completed\",\"sha\":\"$sha\"}"
+      sep=","
+    done
+    # The mode goes in the attestation because a reader counting two steps has
+    # to be able to tell a combined gate from a separate one that skipped a
+    # pass. The reason is free text and lands inside JSON, so the two characters
+    # that would end the string early are escaped; one_line already took the
+    # control bytes and the newlines out at open.
+    reason="$(kv review_reason)"
+    reason="${reason//\\/\\\\}"
+    reason="${reason//\"/\\\"}"
+    printf '<!-- ship-attestation:v1 {"head_sha":"%s","fix_passes":%s,"review_mode":"%s","review_reason":"%s","steps":[%s]} -->\n' \
+      "$(git rev-parse HEAD)" "$n" "$mode" "$reason" "$steps"
+    ;;
+
+  push-ok)
+    [ $# -eq 0 ] || finding "$usage"
+    require_file
+    require_clean
+    n="$(fix_count)" || exit $?
+    [ "$n" -le 3 ] \
+      || finding "the guard file counts $n fix passes, more than three; revert to the minimal fix and stop"
+    head_sha="$(git rev-parse HEAD)"
+    # The checks belong here too: a commit made after the suite ran is reviewed
+    # code that was never run, and the descent test alone lets it through.
+    for phase in $(phases); do
+      sha="$(recorded_sha "$phase")" || exit $?
+      [ "$sha" = "$head_sha" ] || finding \
+        "the $phase covered $(git rev-parse --short "$sha"), not HEAD $(git rev-parse --short HEAD); open a fix pass and record every phase again"
+    done
+    ;;
+
+  *) finding "$usage" ;;
+esac
+exit 0

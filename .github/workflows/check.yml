@@ -1,0 +1,64 @@
+name: check
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  # One matrix entry per plugin folder, found with ls, so a new plugin is a
+  # folder and a catalog entry and nothing in this file changes.
+  plugins:
+    runs-on: ubuntu-latest
+    outputs:
+      list: ${{ steps.ls.outputs.list }}
+    steps:
+      # Pinned to a commit, not a tag: a tag can be moved to point at other code.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - id: ls
+        run: echo "list=$(ls plugins | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"
+
+  ubuntu:
+    needs: plugins
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        plugin: ${{ fromJSON(needs.plugins.outputs.list) }}
+    env:
+      PLUGIN: ${{ matrix.plugin }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Install bats, shellcheck, jq
+        run: sudo apt-get update -q && sudo apt-get install -y -q bats shellcheck jq
+      - name: Versions
+        run: bats --version && shellcheck --version && bash --version | head -n 1
+      - run: make check PLUGIN="$PLUGIN"
+
+  # macOS still ships bash 3.2 as /bin/bash. check-bash32 puts it first on PATH
+  # and runs the same checks, so every script and bats itself run under it.
+  macos-bash32:
+    needs: plugins
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        plugin: ${{ fromJSON(needs.plugins.outputs.list) }}
+    env:
+      PLUGIN: ${{ matrix.plugin }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Install bats, shellcheck
+        run: brew install bats-core shellcheck
+      - name: Versions
+        run: bats --version && shellcheck --version && /bin/bash --version | head -n 1
+      - run: make check-bash32 PLUGIN="$PLUGIN"

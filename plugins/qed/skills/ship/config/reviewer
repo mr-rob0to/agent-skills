@@ -1,0 +1,29 @@
+# The reviewer /ship runs for step 6, the pull request's code review. It is a
+# command line; the review prompt is appended to it as one argument.
+#
+# In a separate gate it reads for correctness and a second reviewer runs the
+# security pass. In a combined gate it is the only review the branch gets, and
+# the prompt it is given covers the security areas as well. The gate says which
+# mode it ran in, in the pull request body, either way.
+#
+# `auto` means the command is chosen when the gate runs, from what this host
+# has: codex when it is on PATH, otherwise Claude Code with Fable in plan mode,
+# which reads the tree and the diff and can change neither. Either way the
+# command is told not to read the reviewed repository's own AGENTS.md or
+# CLAUDE.md, which would otherwise let the change under review write part of its
+# reviewer's instructions. A command line you write yourself is not given that
+# treatment; it is yours, and isolating it is yours too. With neither codex nor
+# claude on the host the gate stops and names your file. The choice is made
+# again on every run and never written down, so a machine that installs codex
+# later starts using it without an edit anywhere.
+#
+# This file is replaced whenever the skill is updated, so do not edit it. To
+# change the reviewer, copy it to ~/.config/ship/reviewer, or to
+# $XDG_CONFIG_HOME/ship/reviewer when that is set, and edit the copy: /ship reads
+# that file first and falls back to this one. A value you write there is never
+# probed.
+#
+# If the model named here is refused, fall back to another one and say in the
+# pull request which reviewer actually ran. A review that silently downgraded is
+# worse than one that did not happen.
+auto

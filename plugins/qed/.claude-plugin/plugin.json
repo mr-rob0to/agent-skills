@@ -1,0 +1,8 @@
+{
+  "name": "qed",
+  "version": "0.1.1",
+  "description": "Software delivery. ship takes a finished branch through a guarded pre-merge gate: right base, bound commits, independent reviews, a filled pull request, and a CI watch.",
+  "author": {
+    "name": "mr-rob0to"
+  }
+}
