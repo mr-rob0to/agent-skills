@@ -780,8 +780,9 @@ All of these mean: go back and do the step properly.
   host has** and prints what it picked. For the code review it also reads `SHIP_AUTHOR`, or
   Claude Code's own `CLAUDECODE=1` when that is unset, and picks the vendor that did not write
   the branch: Claude for a Codex branch, Codex otherwise. A `note:` on stderr means the host
-  had only the author's own vendor. A value written in a config file is never probed. Say
-  in the pull request which reviewer ran, as step 6 already requires.
+  had only the author's own vendor. Either way the model is the newest of its line, chosen
+  on every run; how, and what happens when Codex lists none, is in the bundled notes in
+  `config/`. A value written in a config file is never probed. Say in the pull request which reviewer and model ran, as step 6 already requires.
 - **Step 6** runs its reviewer as a command on every host. From inside the same tool the value
   names, that is a nested read-only run; that is intended, because the reviewer must be a fresh
   session that has seen nothing of the change.
