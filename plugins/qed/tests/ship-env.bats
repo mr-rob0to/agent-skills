@@ -961,5 +961,5 @@ events() {  # $@ event lines; written where the usage tests read them
 # the same, so the two cannot drift apart unnoticed.
 @test "the shipped tested Sols are gpt-5.6-sol alone, and the note agrees" {
   [ "$(grep '^tested_sols=' "$SKILL_DIR/ship-env")" = "tested_sols='gpt-5.6-sol'" ]
-  tr '\n' ' ' < "$SKILL_DIR/config/security-reviewer" | grep -qF 'Versions that have passed: # gpt-5.6-sol.'
+  tr '\n' ' ' < "$SKILL_DIR/config/security-reviewer" | grep -qF 'Versions that have passed: # gpt-5.6-sol,'
 }

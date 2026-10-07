@@ -21,7 +21,9 @@ valid_name() {  # $1 candidate
 fetch_archive() {  # $1 archive name
   local name="$1"
   valid_name "$name" || { printf 'finding: bad archive name\n' >&2; return 2; }
-  tar -xzf "$archive_root/$name.tar.gz" -C /tmp/unpack
+  local dest
+  dest="$(mktemp -d)" || { printf 'finding: cannot make a private directory\n' >&2; return 2; }
+  tar -xzf "$archive_root/$name.tar.gz" -C "$dest"
 }
 
 show_archive_note() {  # $1 archive name

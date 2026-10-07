@@ -35,5 +35,11 @@ the file, the line, the attacker, the input and the gain are what must match.
 ## clean.sh
 
 No Important or Critical finding. A reviewer may note in passing that
-`valid_name` is duplicated in both functions, or that `/tmp/unpack` is a fixed
-path; neither is Important, and neither is a reason to fail qualification.
+`valid_name` is duplicated in both functions; that is not Important, and not a
+reason to fail qualification. It unpacks into a private `mktemp -d` directory:
+an earlier copy used the fixed `/tmp/unpack`, which another local user can
+create first as a link, and reviewers rightly reported it as High.
+
+`vulnerable.sh` still unpacks into `/tmp/unpack`. Reporting that as well is
+correct and does not count against a reviewer; only the two defects above are
+required.
