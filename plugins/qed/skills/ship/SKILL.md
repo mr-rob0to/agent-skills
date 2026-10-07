@@ -798,6 +798,9 @@ All of these mean: go back and do the step properly.
   pull request. Anything else stops the step. The bundled file, because the operator's own copy
   need not carry the note; anchored to `$SHIP_DIR`, because a bare path would be the reviewed
   repository's own file.
+- **`ship-attest-check verify <head>`** reads a pull request body on stdin and agrees only when
+  its one attestation names that head and binds every phase the mode owes to it. A repository's
+  CI runs it through the reusable `ship-attestation` workflow; the gate itself never calls it.
 - Each config file carries a note saying what it is for; read it before changing it.
 - **A review's usage comes from its reviewer's own counts or not at all.** Only `codex exec`
   gives them, through `--json`, and `"$SHIP_ENV" usage` turns one run's events into the

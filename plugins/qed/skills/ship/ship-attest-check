@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# Answers, for a pull request's CI, whether the gate covered the commit being
+# merged. The gate writes one attestation into the pull request body at step 8
+# and rebuilds it after every push; this reads it back and agrees only when it
+# names the head, and every phase its review mode owes is bound to that head.
+#
+# It is evidence, not proof. The attestation is written by the session that ran
+# the gate, from a guard file anything running as that account can edit. What
+# this adds is that a head the gate never saw cannot merge quietly: a commit
+# pushed after the reviews, a body left over from an earlier push, or a separate
+# gate whose security pass never ran each turn the check red.
+#
+# It also answers whether a change is docs-only, which the gate skips. Like
+# ship-env, it sources nothing and carries its own finding().
+set -u
+
+finding() { printf 'finding: %s\n' "$*" >&2; exit 2; }
+
+usage="usage: ship-attest-check verify <head-sha> < body | docs-only < paths"
+
+command -v jq >/dev/null 2>&1 || finding "jq is not on PATH; the attestation cannot be read"
+
+is_sha() { [ "${#1}" -eq 40 ] && case "$1" in *[!0-9a-f]*) return 1 ;; esac; }
+
+verify() {  # $1 head; the body on stdin
+  local head="$1" lines count json mode n owes phase sha extra
+  is_sha "$head" || finding "the head is not a commit id: $head"
+  # The marker opens the HTML comment the guard prints on one line. A body
+  # quoting the word elsewhere in prose has no comment opener in front of it.
+  lines="$(grep -F '<!-- ship-attestation:v1 ' || true)"
+  if [ -z "$lines" ]; then count=0; else count="$(printf '%s\n' "$lines" | wc -l | tr -d ' ')"; fi
+  [ "$count" -ne 0 ] || finding "the pull request body carries no ship attestation; run the gate"
+  [ "$count" -eq 1 ] || finding "the pull request body carries $count ship attestations; rebuild the body with one"
+  json="${lines#*<!-- ship-attestation:v1 }"
+  json="${json% -->*}"
+  printf '%s' "$json" | jq -e 'type == "object"' >/dev/null 2>&1 \
+    || finding "the ship attestation is not readable JSON"
+  field() { printf '%s' "$json" | jq -r "$1"; }
+
+  sha="$(field '.head_sha // ""')"
+  [ "$sha" = "$head" ] \
+    || finding "the attestation covers $sha, not the head $head; the gate did not see the commit going out"
+
+  mode="$(field '.review_mode // ""')"
+  case "$mode" in
+    combined) owes="checks review" ;;
+    separate) owes="checks review security" ;;
+    *) finding "the attestation names review mode '$mode'; expected combined or separate" ;;
+  esac
+
+  n="$(field '.fix_passes | if type == "number" then tostring else "" end')"
+  case "$n" in '' | *[!0-9]*) finding "the attestation's fix count is not a number" ;; esac
+  [ "$n" -le 3 ] || finding "the attestation counts $n fix passes; the gate allows three"
+
+  for phase in $owes; do
+    sha="$(field "[.steps[]? | select(.step == \"$phase\" and .status == \"completed\") | .sha] | first // \"\"")"
+    [ -n "$sha" ] || finding "the $mode gate owes a $phase phase at $head and the attestation has none"
+    [ "$sha" = "$head" ] || finding "the $phase phase covered $sha, not the head $head"
+  done
+  # A combined gate runs no security pass and the guard refuses to record one,
+  # so an attestation claiming both was not written by the gate.
+  extra="$(field "[.steps[]?.step | select(. as \$s | \"$owes\" | split(\" \") | index(\$s) | not)] | first // \"\"")"
+  [ -z "$extra" ] || finding "the attestation records a $extra phase the $mode gate does not run"
+
+  printf 'ok: the %s gate covered %s\n' "$mode" "$head"
+}
+
+# Prose nothing but a person reads. Anything an agent or a tool consumes runs
+# the gate like code, whatever its extension: instruction files, skills,
+# prompts, templates, and everything under a tool's own folder.
+docs_only() {  # paths on stdin; exit 0 docs-only, 1 not
+  local path base low any=0
+  while IFS= read -r path || [ -n "$path" ]; do
+    [ -n "$path" ] || continue
+    any=1
+    low="$(printf '%s' "$path" | tr '[:upper:]' '[:lower:]')"
+    base="${low##*/}"
+    case "$low" in *.md) ;; *) return 1 ;; esac
+    case "$base" in agents.md | claude.md | gemini.md | skill.md) return 1 ;; esac
+    case "/$low" in
+      */.github/* | */.claude/* | */.codex/* | */.agents/* | */skills/* | */templates/* | */prompts/*) return 1 ;;
+    esac
+  done
+  [ "$any" -eq 1 ] || finding "no changed files were given; cannot say the change is docs-only"
+  return 0
+}
+
+cmd="${1:-}"; shift || true
+case "$cmd" in
+  verify) [ $# -eq 1 ] || finding "$usage"; verify "$1" ;;
+  docs-only) [ $# -eq 0 ] || finding "$usage"; docs_only ;;
+  *) finding "$usage" ;;
+esac
