@@ -57,11 +57,13 @@ Out of the box both reviewers are set to `auto`:
   against. Without `codex`, a branch that needs a security review stops rather
   than running a reviewer nobody has tested.
 
-Both always use the newest version of their model. Claude Code is given
-`fable`, which it resolves to the newest Fable. Codex has no such name, so the
-gate reads Codex's model list on every run and takes the Sol that Codex ranks
-first, falling back to `gpt-5.6-sol` with a note when Codex lists none. The pull
-request names the model that ran.
+The code review always uses the newest version of its model. Claude Code is
+given `fable`, which it resolves to the newest Fable. Codex has no such name, so
+the gate reads Codex's model list on every run and takes the Sol that Codex
+ranks first, falling back to `gpt-5.6-sol` with a note when Codex lists none.
+The security review takes the newest Sol that has passed the planted-defect
+fixtures in `tests/fixtures/security-review`, since a newer Sol has failed them.
+The pull request names the model that ran.
 
 To choose your own, write a command line into a file:
 

@@ -93,8 +93,13 @@ codex_line='codex exec -m gpt-9.1-sol --sandbox read-only -c project_doc_max_byt
 
 # A copy whose bundled defaults are auto, so the probe is reached the way a
 # fresh install reaches it.
+#
+# The copy's tested Sols are the catalog's own names, so the security pass can
+# be asked about them; the real list is checked against the real script below.
 auto_copy() {  # prints the copied folder
   local c; c="$(skill_copy)"
+  sed "s/^tested_sols=.*/tested_sols='${TESTED_SOLS-gpt-9.1-sol gpt-8-sol gpt-10-sol}'/" \
+    "$SKILL_DIR/ship-env" > "$c/ship-env"
   printf 'auto\n' > "$c/config/reviewer"
   printf 'auto\n' > "$c/config/security-reviewer"
   echo "$c"
@@ -233,9 +238,10 @@ auto_copy() {  # prints the copied folder
   run --separate-stderr on_host "$c" reviewer
   [ "$status" -eq 0 ]
   [ "$output" = "$codex_line" ]
+  # The fake catalog lists no Sol the shipped script counts as tested.
   run --separate-stderr on_host "$c" security-reviewer
   [ "$status" -eq 0 ]
-  [ "$output" = "$codex_line" ]
+  [ "$output" = "codex exec -m gpt-5.6-sol --sandbox read-only -c project_doc_max_bytes=0" ]
 }
 
 @test "auto picks codex for the code review when codex is on this host" {
@@ -900,7 +906,7 @@ events() {  # $@ event lines; written where the usage tests read them
   host codex
   for cat in empty 'not json' '{"models":[{"slug":"gpt-9-astra","visibility":"list","priority":1}]}'; do
     catalog "$cat"
-    run --separate-stderr on_host "$c" security-reviewer
+    run --separate-stderr on_host "$c" reviewer
     [ "$status" -eq 0 ]
     [ "$output" = "codex exec -m gpt-5.6-sol --sandbox read-only -c project_doc_max_bytes=0" ]
     [ "$stderr" = "note: codex did not list a Sol model; the reviewer falls back to gpt-5.6-sol" ]
@@ -924,4 +930,36 @@ events() {  # $@ event lines; written where the usage tests read them
   run --separate-stderr on_host "$c" reviewer
   [ "$status" -eq 0 ]
   [[ "$output" == *" --model fable "* ]]
+}
+
+# A newer Sol is not a better security reviewer by default: gpt-6.1-sol missed
+# both planted defects in the fixtures that gpt-5.6-sol found. So the security
+# pass takes the newest listed Sol that has passed them, while the code review
+# takes the newest listed Sol.
+@test "the security pass takes the newest tested Sol, the code review the newest Sol" {
+  TESTED_SOLS='gpt-8-sol' c="$(auto_copy)"
+  host codex
+  run --separate-stderr on_host "$c" security-reviewer
+  [ "$status" -eq 0 ]
+  [ "$output" = "codex exec -m gpt-8-sol --sandbox read-only -c project_doc_max_bytes=0" ]
+  [ -z "$stderr" ]
+  run --separate-stderr on_host "$c" reviewer
+  [ "$status" -eq 0 ]
+  [ "$output" = "codex exec -m gpt-9.1-sol --sandbox read-only -c project_doc_max_bytes=0" ]
+}
+
+@test "a catalog with no tested Sol puts the security pass on gpt-5.6-sol and says so" {
+  TESTED_SOLS='gpt-5.6-sol' c="$(auto_copy)"
+  host codex
+  run --separate-stderr on_host "$c" security-reviewer
+  [ "$status" -eq 0 ]
+  [ "$output" = "codex exec -m gpt-5.6-sol --sandbox read-only -c project_doc_max_bytes=0" ]
+  [ "$stderr" = "note: codex listed no Sol that has passed the security fixtures; the security reviewer falls back to gpt-5.6-sol" ]
+}
+
+# The shipped list holds only versions that passed, and the bundled note says
+# the same, so the two cannot drift apart unnoticed.
+@test "the shipped tested Sols are gpt-5.6-sol alone, and the note agrees" {
+  [ "$(grep '^tested_sols=' "$SKILL_DIR/ship-env")" = "tested_sols='gpt-5.6-sol'" ]
+  tr '\n' ' ' < "$SKILL_DIR/config/security-reviewer" | grep -qF 'Versions that have passed: # gpt-5.6-sol.'
 }
