@@ -48,8 +48,11 @@ on your `PATH`: `codex`, or failing that `claude`.
 
 Out of the box both reviewers are set to `auto`:
 
-- **Code review:** `codex` when it is on your `PATH`, otherwise Claude Code in
-  plan mode, which can read the code but not change it.
+- **Code review:** the vendor that did not write the branch. The gate says
+  which harness it runs in, so a branch written in Codex goes to Claude Code in
+  plan mode, which can read the code but not change it, and any other branch
+  goes to `codex`. With only one of them installed, that one reviews, and the
+  pull request says when it is the author's own vendor.
 - **Security review:** `codex` only, with the model this gate was tested
   against. Without `codex`, a branch that needs a security review stops rather
   than running a reviewer nobody has tested.
@@ -67,6 +70,36 @@ replaces the bundled files, never yours.
 
 In Claude Code only, `security-reviewer` may say `agent:<name>` to use one of
 your agents. Any other harness stops the gate on that value.
+
+### Requiring the gate in CI
+
+The gate ends every pull request body with a hidden attestation naming the
+commit each check and review saw. A repository can make GitHub refuse to merge
+a head the gate never covered: call the reusable workflow and mark its job a
+required status check in a branch ruleset.
+
+```yaml
+name: ship-attestation
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+permissions:
+  contents: read
+  pull-requests: read
+jobs:
+  attestation:
+    uses: mr-rob0to/agent-skills/.github/workflows/ship-attestation.yml@main
+```
+
+The check passes when the body carries exactly one attestation, it names the
+pull request's head, and every phase its review mode owes is bound to that
+head. A pull request whose every file is prose only a person reads passes
+without one, because the gate skips it. Run the same check by hand with
+`skills/ship/ship-attest-check verify <head-sha> < body.md`.
+
+It is evidence, not proof: the session that ran the gate writes the
+attestation. What it adds is that a commit pushed after the reviews, or a body
+left over from an earlier push, turns the check red.
 
 ### What the gate does not cover
 

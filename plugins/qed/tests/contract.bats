@@ -499,6 +499,13 @@ run_review_block() {
   block="$(review_block)"
   [ -n "$block" ] || { echo "step 6 carries no reviewer block"; return 1; }
   run env SHIP_ENV="$SKILL_DIR/ship-env" BASE=main TMPDIR="$TEST_HOME/tmp" \
+    SHIP_AUTHOR="${GATE_AUTHOR-claude}" PATH="$TEST_HOME/fake:$PATH" bash -c "$block"
+}
+
+run_review_block_unstated() {
+  block="$(review_block)"
+  [ -n "$block" ] || { echo "step 6 carries no reviewer block"; return 1; }
+  run env -u SHIP_AUTHOR SHIP_ENV="$SKILL_DIR/ship-env" BASE=main TMPDIR="$TEST_HOME/tmp" \
     PATH="$TEST_HOME/fake:$PATH" bash -c "$block"
 }
 
@@ -520,7 +527,7 @@ run_review_block() {
   FAKE_STDIN_CHECK=1 gate_fakes 'codex exec -m some-model --sandbox read-only'
   block="$(review_block)"
   [ -n "$block" ] || { echo "step 6 carries no reviewer block"; return 1; }
-  run bash -c 'echo pending | env SHIP_ENV="$1" BASE=main TMPDIR="$2" PATH="$3" bash -c "$4"' _ \
+  run bash -c 'echo pending | env SHIP_ENV="$1" BASE=main TMPDIR="$2" PATH="$3" SHIP_AUTHOR=claude bash -c "$4"' _ \
     "$SKILL_DIR/ship-env" "$TEST_HOME/tmp" "$TEST_HOME/fake:$PATH" "$block"
   [ "$status" -eq 0 ]
   [ "${lines[0]}" = "## Findings" ]
@@ -535,6 +542,32 @@ run_review_block() {
   [[ "$output" == *"usage: input=unknown output=unknown cache_read=unknown cache_write=unknown"* ]]
   [ "${lines[${#lines[@]}-1]}" = "finding: the reviewer exited 1" ]
   [ -z "$(ls -A "$TEST_HOME/tmp")" ]
+}
+
+# The review comes from the vendor that did not write the change, and only the
+# session knows which harness it is. A block run without saying so stops before
+# any reviewer runs, rather than quietly picking the author's own vendor.
+@test "the review block stops when the gate has not said who wrote the branch" {
+  gate_fakes 'codex exec -m some-model --sandbox read-only'
+  run_review_block_unstated
+  [ "$status" -eq 2 ]
+  [[ "$output" != *"## Findings"* ]]
+  [[ "$output" == *"finding: set SHIP_AUTHOR to the harness running this gate"* ]]
+}
+
+@test "an empty author, for any other harness, still reaches the reviewer" {
+  gate_fakes 'codex exec -m some-model --sandbox read-only'
+  GATE_AUTHOR= run_review_block
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = "## Findings" ]
+}
+
+@test "the skill tells each harness what to state as the author" {
+  six="$(unwrapped '/^## Step 6\./,/^## Step 7\./p' "$SHIP_MD")"
+  [[ "$six" == *'`claude` in Claude Code, `codex` in Codex'* ]]
+  notes="$(unwrapped '/^## Harness notes/,$p' "$SHIP_MD")"
+  [[ "$notes" == *'SHIP_AUTHOR=codex'* ]]
+  [[ "$notes" == *'SHIP_AUTHOR=claude'* ]]
 }
 
 @test "the gate leaves a reviewer that gives no counts unknown" {

@@ -1,0 +1,63 @@
+name: ship-attestation
+
+# A reusable check that a pull request's head is the commit the qed ship gate
+# covered. A repository calls it from its own workflow and marks the job a
+# required status check, so GitHub will not merge a head the gate never saw:
+#
+#   name: ship-attestation
+#   on:
+#     pull_request:
+#       types: [opened, edited, synchronize, reopened]
+#   permissions:
+#     contents: read
+#     pull-requests: read
+#   jobs:
+#     attestation:
+#       uses: mr-rob0to/agent-skills/.github/workflows/ship-attestation.yml@main
+#
+# `edited` is in the list because the gate pushes first and rebuilds the body
+# after: the run on the push is red until the body names the new head, and the
+# run on the edit turns it green. A docs-only pull request, which the gate
+# skips, passes without an attestation.
+
+on:
+  workflow_call:
+    inputs:
+      qed-ref:
+        description: The agent-skills ref whose ship-attest-check runs.
+        type: string
+        default: main
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  attestation:
+    runs-on: ubuntu-latest
+    steps:
+      # Pinned to a commit, not a tag: a tag can be moved to point at other code.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: mr-rob0to/agent-skills
+          ref: ${{ inputs.qed-ref }}
+          path: .qed
+          persist-credentials: false
+      - name: The gate covered the head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          CHECK: .qed/plugins/qed/skills/ship/ship-attest-check
+        run: |
+          [ -n "$PR" ] || { echo "finding: ship-attestation runs on pull_request events only" >&2; exit 2; }
+          # A failed file listing falls through to verify, which then needs an
+          # attestation: an error here can only make the check stricter.
+          if gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename' | "$CHECK" docs-only; then
+            echo "docs-only: every changed file is prose only a person reads, and the gate skips it"
+            exit 0
+          fi
+          # The body is read now, not from the event: a re-run must see the body
+          # as it stands, after the gate rebuilt it.
+          gh api "repos/$REPO/pulls/$PR" --jq '.body // ""' | "$CHECK" verify "$HEAD_SHA"

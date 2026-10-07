@@ -267,7 +267,19 @@ operator's own config or the bundled default, so a fresh install gets a working
 reviewer and an operator who wants another one edits a file instead of this
 skill.
 
+**Say who wrote the branch.** Set `SHIP_AUTHOR` to the harness running this
+gate: `claude` in Claude Code, `codex` in Codex, and empty in any other. With
+`auto`, `ship-env` then hands the review to the vendor that did not write the
+change when the host has it, and prints a `note:` when it cannot; a note means
+the pull request says the reviewer is the author's own vendor. The block stops
+when `SHIP_AUTHOR` is not set at all, because guessing here is how a branch
+ends up reviewed by the model that wrote it.
+
 ```bash
+[ -n "${SHIP_AUTHOR+set}" ] || {
+  echo "finding: set SHIP_AUTHOR to the harness running this gate: claude, codex, or empty for any other" >&2; exit 2
+}
+export SHIP_AUTHOR
 REVIEWER="$("$SHIP_ENV" reviewer)"
 RUN_DIR="$(mktemp -d)"; ANSWER="$RUN_DIR/stdout"
 case "$REVIEWER" in
@@ -399,6 +411,10 @@ The security reviewer comes from the same place as the correctness one:
 ```bash
 SECURITY_REVIEWER="$("$SHIP_ENV" security-reviewer)"
 ```
+
+Run it with `SHIP_AUTHOR` still set as step 6 set it. The author does not
+change this choice, but a branch Codex wrote gets a `note:` saying its auditor is
+the same vendor, and the pull request says so.
 
 Where nobody has stated a preference, `ship-env` returns the one security
 reviewer that has been qualified against the fixtures in this plugin's
@@ -761,7 +777,10 @@ All of these mean: go back and do the step properly.
   this file, so changing the reviewer is a one-line edit to a config file and never an edit to
   the gate.
 - **`auto`, the bundled default for both, means `ship-env` picks the command from what this
-  host has** and prints what it picked. A value written in a config file is never probed. Say
+  host has** and prints what it picked. For the code review it also reads `SHIP_AUTHOR`, or
+  Claude Code's own `CLAUDECODE=1` when that is unset, and picks the vendor that did not write
+  the branch: Claude for a Codex branch, Codex otherwise. A `note:` on stderr means the host
+  had only the author's own vendor. A value written in a config file is never probed. Say
   in the pull request which reviewer ran, as step 6 already requires.
 - **Step 6** runs its reviewer as a command on every host. From inside the same tool the value
   names, that is a nested read-only run; that is intended, because the reviewer must be a fresh
@@ -779,6 +798,9 @@ All of these mean: go back and do the step properly.
   pull request. Anything else stops the step. The bundled file, because the operator's own copy
   need not carry the note; anchored to `$SHIP_DIR`, because a bare path would be the reviewed
   repository's own file.
+- **`ship-attest-check verify <head>`** reads a pull request body on stdin and agrees only when
+  its one attestation names that head and binds every phase the mode owes to it. A repository's
+  CI runs it through the reusable `ship-attestation` workflow; the gate itself never calls it.
 - Each config file carries a note saying what it is for; read it before changing it.
 - **A review's usage comes from its reviewer's own counts or not at all.** Only `codex exec`
   gives them, through `--json`, and `"$SHIP_ENV" usage` turns one run's events into the
@@ -789,9 +811,13 @@ All of these mean: go back and do the step properly.
 ## Harness notes
 
 - **Claude Code** invokes this skill as `/qed:ship` and writes the skill's directory into step
-  0's block when it loads it, so nothing needs setting.
+  0's block when it loads it, so `SHIP_DIR` needs no setting. Run steps 6 and 7 with
+  `SHIP_AUTHOR=claude`.
 - **Codex** invokes it as `$qed:ship`, and the list of skills it starts with gives each skill's path.
-  Set `SHIP_DIR` to the directory of this file's path in that list before step 0's block runs.
+  Set `SHIP_DIR` to the directory of this file's path in that list before step 0's block runs, and
+  run steps 6 and 7 with `SHIP_AUTHOR=codex`. The Claude reviewer it then gets needs the network
+  and your Claude sign-in, so a sandbox without network stops step 6 with the reviewer's exit
+  status rather than reviewing.
 - **Any other harness, or a copy of this folder anywhere**: set `SHIP_DIR` to the directory
   holding this file, or export `SHIP_GUARD` naming the `ship-guard` beside it. Step 0 stops with
   a finding when neither is set.
