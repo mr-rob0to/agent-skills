@@ -40,12 +40,35 @@ host() {  # $1.. any of: codex claude user-agent project-agent
   local w
   for w in "$@"; do
     case "$w" in
-      codex | claude) printf '#!/bin/sh\nexit 0\n' > "$STUB/$w"; chmod +x "$STUB/$w" ;;
+      claude) printf '#!/bin/sh\nexit 0\n' > "$STUB/$w"; chmod +x "$STUB/$w" ;;
+      # codex answers `debug models` with whatever catalog.json holds, which
+      # catalog() writes; any other call does nothing, as before.
+      codex)
+        printf '#!/bin/sh\n[ "$1 $2" = "debug models" ] && [ -f "%s/catalog.json" ] && cat "%s/catalog.json"\nexit 0\n' \
+          "$STUB" "$STUB" > "$STUB/codex"
+        chmod +x "$STUB/codex"
+        [ -f "$STUB/catalog.json" ] || catalog default ;;
       user-agent)     : > "$HOME/.claude/agents/security-reviewer.md" ;;
       project-agent)  : > "$PROJECT/.claude/agents/security-reviewer.md" ;;
       *) echo "host: unknown ingredient $w"; return 1 ;;
     esac
   done
+}
+
+# The catalog the stub codex prints. The default ranks a newer-numbered Sol
+# below an older one, and hides a third, so a pick by slug or by list order
+# answers differently from a pick by priority among listed models.
+catalog() {  # $1 default | empty | <raw json>
+  case "$1" in
+    default) printf '%s\n' '{"models":[
+      {"slug":"gpt-9-astra","visibility":"list","priority":1},
+      {"slug":"gpt-9.2-sol","visibility":"list","priority":4},
+      {"slug":"gpt-9.1-sol","visibility":"list","priority":2},
+      {"slug":"gpt-99-sol","visibility":"hide","priority":0},
+      {"slug":"gpt-8-sol","visibility":"list","priority":3}]}' ;;
+    empty) : ;;
+    *) printf '%s\n' "$1" ;;
+  esac > "$STUB/catalog.json"
 }
 
 # $STUB first and never an empty field: an empty PATH entry means the working
@@ -65,8 +88,8 @@ on_host() {  # $1 copied folder, $2.. arguments
 
 # The claude command line the probe falls back to, in one place, so a test that
 # asserts it cannot drift from the one ship-env prints.
-claude_line='claude -p --safe-mode --disallowedTools WebFetch,WebSearch --model claude-fable-5-1 --effort high --permission-mode plan'
-codex_line='codex exec -m gpt-5.6-sol --sandbox read-only -c project_doc_max_bytes=0'
+claude_line='claude -p --safe-mode --disallowedTools WebFetch,WebSearch --model fable --effort high --permission-mode plan'
+codex_line='codex exec -m gpt-9.1-sol --sandbox read-only -c project_doc_max_bytes=0'
 
 # A copy whose bundled defaults are auto, so the probe is reached the way a
 # fresh install reaches it.
@@ -854,4 +877,51 @@ events() {  # $@ event lines; written where the usage tests read them
   [ "$status" -eq 2 ]
   [ -z "$output" ]
   [[ "$stderr" == "finding: usage: ship-env "* ]]
+}
+
+# The operator wants the newest version of each reviewer's model. Codex has no
+# name for that, so ship-env reads codex's catalog and takes the listed Sol it
+# ranks first.
+@test "the codex reviewer runs the listed Sol codex ranks first" {
+  c="$(auto_copy)"
+  host codex
+  run --separate-stderr on_host "$c" security-reviewer
+  [ "$status" -eq 0 ]
+  [ "$output" = "codex exec -m gpt-9.1-sol --sandbox read-only -c project_doc_max_bytes=0" ]
+  [ -z "$stderr" ]
+  catalog '{"models":[{"slug":"gpt-10-sol","visibility":"list","priority":7},{"slug":"gpt-9.1-sol","visibility":"list","priority":9}]}'
+  run --separate-stderr on_host "$c" reviewer
+  [ "$status" -eq 0 ]
+  [ "$output" = "codex exec -m gpt-10-sol --sandbox read-only -c project_doc_max_bytes=0" ]
+}
+
+@test "a codex that lists no Sol falls back to gpt-5.6-sol and says so" {
+  c="$(auto_copy)"
+  host codex
+  for cat in empty 'not json' '{"models":[{"slug":"gpt-9-astra","visibility":"list","priority":1}]}'; do
+    catalog "$cat"
+    run --separate-stderr on_host "$c" security-reviewer
+    [ "$status" -eq 0 ]
+    [ "$output" = "codex exec -m gpt-5.6-sol --sandbox read-only -c project_doc_max_bytes=0" ]
+    [ "$stderr" = "note: codex did not list a Sol model; the reviewer falls back to gpt-5.6-sol" ]
+  done
+}
+
+# The slug is printed into a command line the gate runs, so a catalog entry
+# that is not a plain gpt-<version>-sol name is never taken, wherever it ranks.
+@test "a Sol slug that is not a plain model name is never taken" {
+  c="$(auto_copy)"
+  host codex
+  catalog '{"models":[{"slug":"gpt-9-sol; touch pwned #-sol","visibility":"list","priority":1},{"slug":"gpt-9-sol\nx-sol","visibility":"list","priority":2},{"slug":"gpt-9.5-sol\n","visibility":"list","priority":2},{"slug":"gpt-8-sol","visibility":"list","priority":3}]}'
+  run --separate-stderr on_host "$c" security-reviewer
+  [ "$status" -eq 0 ]
+  [ "$output" = "codex exec -m gpt-8-sol --sandbox read-only -c project_doc_max_bytes=0" ]
+}
+
+@test "the claude reviewer names fable, which Claude Code resolves to the newest" {
+  c="$(auto_copy)"
+  host claude
+  run --separate-stderr on_host "$c" reviewer
+  [ "$status" -eq 0 ]
+  [[ "$output" == *" --model fable "* ]]
 }

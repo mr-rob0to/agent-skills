@@ -7,8 +7,9 @@
 # mode it ran in, in the pull request body, either way.
 #
 # `auto` means the command is chosen when the gate runs, from what this host
-# has: codex when it is on PATH, otherwise Claude Code with Fable in plan mode,
-# which reads the tree and the diff and can change neither. Either way the
+# has: codex on the newest Sol it lists when it is on PATH, otherwise Claude Code
+# on the newest Fable in plan mode, which reads the tree and the diff and can
+# change neither. A branch Codex wrote goes to Claude when the host has it. Either way the
 # command is told not to read the reviewed repository's own AGENTS.md or
 # CLAUDE.md, which would otherwise let the change under review write part of its
 # reviewer's instructions. A command line you write yourself is not given that

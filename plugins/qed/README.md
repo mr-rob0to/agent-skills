@@ -53,9 +53,15 @@ Out of the box both reviewers are set to `auto`:
   plan mode, which can read the code but not change it, and any other branch
   goes to `codex`. With only one of them installed, that one reviews, and the
   pull request says when it is the author's own vendor.
-- **Security review:** `codex` only, with the model this gate was tested
+- **Security review:** `codex` only, on Sol, the model this gate was tested
   against. Without `codex`, a branch that needs a security review stops rather
   than running a reviewer nobody has tested.
+
+Both always use the newest version of their model. Claude Code is given
+`fable`, which it resolves to the newest Fable. Codex has no such name, so the
+gate reads Codex's model list on every run and takes the Sol that Codex ranks
+first, falling back to `gpt-5.6-sol` with a note when Codex lists none. The pull
+request names the model that ran.
 
 To choose your own, write a command line into a file:
 

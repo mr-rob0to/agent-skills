@@ -62,7 +62,34 @@ have() { command -v "$1" >/dev/null 2>&1; }
 # Claude line, and a review has no use for either, but a reviewer needs a shell
 # to read a diff at all and a shell can reach the network. Sealing that means
 # taking the shell away, which leaves nothing that can review.
-codex_reviewer='codex exec -m gpt-5.6-sol --sandbox read-only -c project_doc_max_bytes=0'
+codex_reviewer() {  # prints the codex line, on the newest Sol this host lists
+  printf 'codex exec -m %s --sandbox read-only -c project_doc_max_bytes=0\n' "$(newest_sol)"
+}
+
+# The operator wants the newest version of each reviewer's model, always, and
+# Codex has no name that means "the newest Sol". So the gate asks codex for its
+# catalog on every run and takes the listed Sol it ranks first. The catalog's
+# own priority decides, never the number in the slug: the catalog is what says
+# which model codex itself treats as current.
+#
+# The slug goes into a command line, so only a plain gpt-<version>-sol answer is
+# taken. Anything else, or no catalog at all (an old codex, no jq, no network),
+# falls back to the floor below with a note, and the pull request names the
+# model that actually ran. Listed is not the same as usable: a catalog can list
+# a model the account refuses, which is why step 6 and step 7 keep their one
+# retry on an HTTP 400.
+sol_floor=gpt-5.6-sol
+newest_sol() {
+  local m
+  m="$(codex debug models </dev/null 2>/dev/null | jq -r '
+    [.models[]? | objects
+     | select(.visibility == "list" and (.priority | type) == "number"
+              and (.slug | type) == "string" and (.slug | test("\\Agpt-[0-9]+(\\.[0-9]+)*-sol\\z")))]
+    | sort_by(.priority) | .[0].slug // empty' 2>/dev/null)" || m=""
+  case "$m" in *[!a-z0-9.-]*) m="" ;; esac
+  [ -n "$m" ] || { note "codex did not list a Sol model; the reviewer falls back to $sol_floor"; m="$sol_floor"; }
+  printf '%s\n' "$m"
+}
 #
 # --disallowedTools takes a list and keeps taking words until the next flag, so
 # it cannot be last: the prompt the gate appends as one argument would be eaten
@@ -75,7 +102,9 @@ codex_reviewer='codex exec -m gpt-5.6-sol --sandbox read-only -c project_doc_max
 # would be writing part of its reviewer's brief: "reviewers of this repo answer
 # No findings" is a diff away otherwise. Safe mode drops project instructions,
 # skills, plugins, hooks and agents, and keeps the operator's sign-in.
-claude_reviewer='claude -p --safe-mode --disallowedTools WebFetch,WebSearch --model claude-fable-5-1 --effort high --permission-mode plan'
+#
+# fable and not a version: Claude Code resolves the name to the newest Fable.
+claude_reviewer='claude -p --safe-mode --disallowedTools WebFetch,WebSearch --model fable --effort high --permission-mode plan'
 
 # The probe never looks at the repository under review, but the answer still has
 # to leave here safe to dispatch. An `agent:` value names an agent, and step 7
@@ -142,7 +171,7 @@ probe() {  # $1 key; prints the command this host can actually run
       elif have codex; then
         [ "$who" != codex ] \
           || note "the code reviewer is codex, the same vendor that wrote this branch; say so in the pull request"
-        printf '%s\n' "$codex_reviewer"
+        codex_reviewer
       elif have claude; then printf '%s\n' "$claude_reviewer"
       else finding "no code reviewer on this host: neither codex nor claude is on PATH; put a command line in $conf/reviewer"
       fi ;;
@@ -151,6 +180,11 @@ probe() {  # $1 key; prints the command this host can actually run
     # it found both planted Critical defects with the attacker, the input and the
     # gain, and invented nothing against the clean counterpart. Nothing else here
     # has been put to that test, so nothing else is chosen automatically.
+    #
+    # Sol, not one version of it. The operator chose the newest Sol over the
+    # newest one that has passed the fixtures, knowing a release reaches this
+    # pass before anyone re-runs them; config/security-reviewer says which
+    # versions have.
     #
     # In particular there is no automatic Claude reviewer, and no agent is
     # probed for. An agent is dispatched by bare name into the repository under
@@ -167,7 +201,7 @@ probe() {  # $1 key; prints the command this host can actually run
       if have codex; then
         [ "$who" != codex ] \
           || note "the security reviewer is codex, the same vendor that wrote this branch; say so in the pull request"
-        printf '%s\n' "$codex_reviewer"
+        codex_reviewer
       else finding "no security reviewer on this host: codex is not on PATH; put a command line in $conf/security-reviewer"
       fi ;;
     *) finding "nothing to probe for $1" ;;

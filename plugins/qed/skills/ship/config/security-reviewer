@@ -4,16 +4,25 @@
 # agent:<name> dispatches that agent on this host, and anything else is a
 # command line the audit prompt is appended to.
 #
-# `auto` means Codex with gpt-5.6-sol, read-only, in a fresh session, told not to
-# read the reviewed repository's own instructions. That is the one reviewer that
-# has been put to the test: it was run against the fixtures in this plugin's
-# tests/fixtures/security-review, found both planted Critical defects with the
-# attacker, the input and the gain, and invented nothing against the clean
-# counterpart. Nothing else here has been qualified, so nothing else is chosen
-# for you. A host without codex stops the gate and names your file, rather than
-# running an unqualified reviewer and calling the result a security pass.
+# `auto` means Codex on the newest Sol it lists, read-only, in a fresh session,
+# told not to read the reviewed repository's own instructions. The gate reads
+# codex's model catalog on every run and takes the listed Sol codex ranks first,
+# so a new Sol is used the day codex lists it. When codex lists no Sol, the gate
+# uses gpt-5.6-sol and says so.
 #
-# If Sol is refused with an HTTP 400, /ship retries once with gpt-5.6-terra and
+# Sol is the one reviewer that has been put to the test: run against the
+# fixtures in this plugin's tests/fixtures/security-review, it found both
+# planted Critical defects with the attacker, the input and the gain, and
+# invented nothing against the clean counterpart. Versions that have passed:
+# gpt-5.6-sol and gpt-6.1-sol. Tracking the newest means a later Sol reviews
+# before anyone re-runs the fixtures against it; that was chosen, and a pass on
+# a new version belongs on the list above. Nothing other than Sol has been
+# qualified, so nothing else is chosen for you. A host without codex stops the
+# gate and names your file, rather than running an unqualified reviewer and
+# calling the result a security pass.
+#
+# If the Sol the gate chose is refused with an HTTP 400, /ship retries once with
+# gpt-5.6-sol, or with gpt-5.6-terra when gpt-5.6-sol was the one refused, and
 # says in the pull request which reviewer actually ran. A review that silently
 # downgraded is worse than one that did not happen.
 #
