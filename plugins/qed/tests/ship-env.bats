@@ -50,10 +50,17 @@ host() {  # $1.. any of: codex claude user-agent project-agent
 
 # $STUB first and never an empty field: an empty PATH entry means the working
 # directory, which would let a stray file there answer the probe.
+#
+# Who wrote the change reaches the probe too, through SHIP_AUTHOR or Claude
+# Code's own CLAUDECODE marker. Both are taken out of the environment first, so
+# a suite run from inside Claude Code answers the same as one run from a plain
+# terminal; AUTHOR_ENV puts back exactly the words a test asks for.
 on_host() {  # $1 copied folder, $2.. arguments
   local c="$1"; shift
-  ( cd "${PROJECT_CWD:-$PROJECT}" && env PATH="$STUB:/usr/bin:/bin" \
-      CLAUDE_CONFIG_DIR="$HOME/.claude" "$c/ship-env" "$@" )
+  # shellcheck disable=SC2086 # AUTHOR_ENV is words, NAME=value each
+  ( cd "${PROJECT_CWD:-$PROJECT}" && env -u CLAUDECODE -u SHIP_AUTHOR \
+      PATH="$STUB:/usr/bin:/bin" CLAUDE_CONFIG_DIR="$HOME/.claude" ${AUTHOR_ENV:-} \
+      "$c/ship-env" "$@" )
 }
 
 # The claude command line the probe falls back to, in one place, so a test that
@@ -231,6 +238,96 @@ auto_copy() {  # prints the copied folder
   [ "$status" -eq 2 ]
   [ -z "$output" ]
   [ "$stderr" = "finding: no code reviewer on this host: neither codex nor claude is on PATH; put a command line in $HOME/.config/ship/reviewer" ]
+}
+
+# ---- who wrote the change ----------------------------------------------------
+#
+# The code review is meant to come from the other vendor: a fresh session that
+# never saw the intent, and a model that did not write the code. With both on
+# the host, a branch Codex wrote goes to Claude and one Claude wrote goes to
+# Codex. The author comes from SHIP_AUTHOR, which the gate sets, or else from
+# Claude Code's own CLAUDECODE marker; with neither, nothing changes.
+
+@test "a branch Codex wrote gets the claude reviewer when both are on the host" {
+  c="$(auto_copy)"
+  host codex claude
+  AUTHOR_ENV="SHIP_AUTHOR=codex" run --separate-stderr on_host "$c" reviewer
+  [ "$status" -eq 0 ]
+  [ "$output" = "$claude_line" ]
+  [ -z "$stderr" ]
+}
+
+@test "a branch Claude wrote keeps the codex reviewer" {
+  c="$(auto_copy)"
+  host codex claude
+  AUTHOR_ENV="SHIP_AUTHOR=claude" run --separate-stderr on_host "$c" reviewer
+  [ "$status" -eq 0 ]
+  [ "$output" = "$codex_line" ]
+  [ -z "$stderr" ]
+}
+
+@test "Claude Code's own marker counts as a Claude author" {
+  c="$(auto_copy)"
+  host codex claude
+  AUTHOR_ENV="CLAUDECODE=1" run --separate-stderr on_host "$c" reviewer
+  [ "$status" -eq 0 ]
+  [ "$output" = "$codex_line" ]
+}
+
+# A Codex session started from a terminal inside Claude Code inherits the
+# marker. The gate's own statement is the better witness, so it wins.
+@test "a stated author outranks the CLAUDECODE marker" {
+  c="$(auto_copy)"
+  host codex claude
+  AUTHOR_ENV="CLAUDECODE=1 SHIP_AUTHOR=codex" run --separate-stderr on_host "$c" reviewer
+  [ "$status" -eq 0 ]
+  [ "$output" = "$claude_line" ]
+}
+
+# No claude to hand the review to: the gate still runs, on codex, and says
+# plainly that the reviewer is the author's own vendor, so the pull request can.
+@test "a branch Codex wrote falls back to codex with a note when claude is missing" {
+  c="$(auto_copy)"
+  host codex
+  AUTHOR_ENV="SHIP_AUTHOR=codex" run --separate-stderr on_host "$c" reviewer
+  [ "$status" -eq 0 ]
+  [ "$output" = "$codex_line" ]
+  [ "$stderr" = "note: the code reviewer is codex, the same vendor that wrote this branch; say so in the pull request" ]
+}
+
+@test "an author ship-env does not know is a finding, not a guess" {
+  c="$(auto_copy)"
+  host codex claude
+  AUTHOR_ENV="SHIP_AUTHOR=gemini" run --separate-stderr on_host "$c" reviewer
+  [ "$status" -eq 2 ]
+  [ -z "$output" ]
+  [ "$stderr" = "finding: SHIP_AUTHOR is 'gemini'; set it to claude or codex, or leave it unset" ]
+}
+
+# Only Sol has been qualified for the security pass, so the author cannot move
+# it. What changes is that a Codex branch is told its auditor is its own vendor.
+@test "the author never moves the security pass, and a Codex branch is told" {
+  c="$(auto_copy)"
+  host codex claude
+  AUTHOR_ENV="SHIP_AUTHOR=codex" run --separate-stderr on_host "$c" security-reviewer
+  [ "$status" -eq 0 ]
+  [ "$output" = "$codex_line" ]
+  [ "$stderr" = "note: the security reviewer is codex, the same vendor that wrote this branch; say so in the pull request" ]
+  AUTHOR_ENV="SHIP_AUTHOR=claude" run --separate-stderr on_host "$c" security-reviewer
+  [ "$status" -eq 0 ]
+  [ "$output" = "$codex_line" ]
+  [ -z "$stderr" ]
+}
+
+@test "a stated reviewer is never moved by the author" {
+  c="$(auto_copy)"
+  o="$(ovr)"
+  printf 'my own reviewer command\n' > "$o/reviewer"
+  host codex claude
+  AUTHOR_ENV="SHIP_AUTHOR=codex" run --separate-stderr on_host "$c" reviewer
+  [ "$status" -eq 0 ]
+  [ "$output" = "my own reviewer command" ]
+  [ -z "$stderr" ]
 }
 
 # The security pass is qualified work, and what was qualified is Codex Sol

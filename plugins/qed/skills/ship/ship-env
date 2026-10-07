@@ -112,10 +112,37 @@ agent_hijacked() {  # $1 value; true when the reviewed repository holds a file n
   [ -f "$top/.claude/agents/${1#agent:}.md" ]
 }
 
+# Who wrote the change, so the code review can come from the other vendor. The
+# gate states it in SHIP_AUTHOR. Failing that, Claude Code marks its own shells
+# with CLAUDECODE=1; Codex has no marker this file trusts, so a Codex session
+# that states nothing reads as unknown and the probe answers as it always has.
+# The stated author wins over the marker: a Codex session started from a
+# terminal inside Claude Code inherits CLAUDECODE and is still Codex.
+author() {  # prints claude, codex, or nothing
+  local a="${SHIP_AUTHOR:-}"
+  [ -n "$a" ] || [ "${CLAUDECODE:-}" != 1 ] || a=claude
+  case "$a" in
+    claude | codex | '') printf '%s\n' "$a" ;;
+    *) finding "SHIP_AUTHOR is '$a'; set it to claude or codex, or leave it unset" ;;
+  esac
+}
+
+note() { printf 'note: %s\n' "$*" >&2; }
+
 probe() {  # $1 key; prints the command this host can actually run
+  local who
+  who="$(author)" || exit $?
   case "$1" in
+    # A review from the vendor that did not write the change, where the host
+    # has it: Claude for a branch Codex wrote, Codex otherwise. With only the
+    # author's own vendor on the host the gate still runs, on that one, and the
+    # note makes the pull request say so rather than imply a second vendor.
     reviewer)
-      if have codex; then printf '%s\n' "$codex_reviewer"
+      if [ "$who" = codex ] && have claude; then printf '%s\n' "$claude_reviewer"
+      elif have codex; then
+        [ "$who" != codex ] \
+          || note "the code reviewer is codex, the same vendor that wrote this branch; say so in the pull request"
+        printf '%s\n' "$codex_reviewer"
       elif have claude; then printf '%s\n' "$claude_reviewer"
       else finding "no code reviewer on this host: neither codex nor claude is on PATH; put a command line in $conf/reviewer"
       fi ;;
@@ -133,8 +160,14 @@ probe() {  # $1 key; prints the command this host can actually run
     # A host without codex stops. The alternative is running an unqualified
     # reviewer and reporting a security pass, which is worse than no pass: the
     # finding names the file where the operator states what to run instead.
+    #
+    # The author does not move this choice, because nothing else is qualified.
+    # A branch Codex wrote is audited by Codex, and the note says so.
     security-reviewer)
-      if have codex; then printf '%s\n' "$codex_reviewer"
+      if have codex; then
+        [ "$who" != codex ] \
+          || note "the security reviewer is codex, the same vendor that wrote this branch; say so in the pull request"
+        printf '%s\n' "$codex_reviewer"
       else finding "no security reviewer on this host: codex is not on PATH; put a command line in $conf/security-reviewer"
       fi ;;
     *) finding "nothing to probe for $1" ;;
