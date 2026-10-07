@@ -12,8 +12,7 @@ folders.
 ## Install
 
 Pick your harness. Each path installs the `qed` plugin, whose one skill today is
-`ship`. The catalog is named `mr-rob0to`, not `agent-skills`, because Claude
-Code keeps `agent-skills` for Anthropic's own catalog.
+`ship`.
 
 **Claude Code**
 
@@ -23,7 +22,7 @@ claude plugin install qed@mr-rob0to
 ```
 
 Then type `/qed:ship`. Bare `/ship` also works unless the repository you are in
-defines a skill of that name, so instruction files should say `/qed:ship`.
+defines a skill of that name.
 
 **Codex**
 
@@ -45,11 +44,7 @@ Or copy the folder from a clone of this repository:
 `cp -R plugins/qed/skills/ship ~/.agents/skills/ship`. Copy the whole folder:
 the gate runs the helpers beside its `SKILL.md` and nothing else.
 
-**Verified on 2026-09-23.** Claude Code and Codex installed the plugin from this
-repository. The gate ran end to end from the Claude Code install, and Codex
-loaded the skill from `$qed:ship`. For `npx skills`, only discovery was checked:
-`--list` finds the skill in a local clone. Installing it that way is untested. The recording is in
-[`plugins/qed/tests/harness/ship.md`](plugins/qed/tests/harness/ship.md).
+The Claude Code and Codex installs are tested. The `npx skills` install is not.
 
 ## Contributing
 
