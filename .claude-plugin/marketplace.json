@@ -9,6 +9,11 @@
       "name": "qed",
       "source": "./plugins/qed",
       "description": "Software delivery. ship takes a finished branch through a guarded pre-merge gate: right base, bound commits, independent reviews, a filled pull request, and a CI watch."
+    },
+    {
+      "name": "worktree-setup",
+      "source": "./plugins/worktree-setup",
+      "description": "Worktree sessions. At session start, tells the agent whether it is in a linked worktree and runs the repo's make worktree-setup target when the repo declares one."
     }
   ]
 }

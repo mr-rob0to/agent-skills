@@ -8,6 +8,7 @@ folders.
 | Plugin | Purpose | Skills |
 |---|---|---|
 | [`qed`](plugins/qed/README.md) | Software delivery | `ship` |
+| [`worktree-setup`](plugins/worktree-setup/README.md) | Worktree sessions | none; a `SessionStart` hook |
 
 ## Install
 
@@ -33,6 +34,11 @@ codex plugin add qed@mr-rob0to
 
 Then type `$qed:ship`. Bare `$ship` also works unless another installed skill
 is named `ship`.
+
+**`worktree-setup`** installs the same way, in either harness:
+`claude plugin install worktree-setup@mr-rob0to` or
+`codex plugin add worktree-setup@mr-rob0to`. Codex asks you to trust its hook
+once. It has no skill to copy into other harnesses.
 
 **Any other harness**
 
