@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# SessionStart hook. Tells the agent whether it is in a linked worktree and,
+# when it is and the repo declares a `worktree-setup:` target in its root
+# Makefile, runs that target first. Prints one line, which the harness adds to
+# the session's context. Always exits 0: a hook that fails would hide the line
+# that says what went wrong.
+set -u
+
+input="$(cat 2>/dev/null || true)"
+
+# The session's directory comes from the harness on stdin. jq when present;
+# otherwise a sed that tolerates spaces around the colon. A path with an
+# escaped quote in it is beyond the sed and falls back to $PWD.
+cwd=""
+if command -v jq >/dev/null 2>&1; then
+  cwd="$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null || true)"
+else
+  cwd="$(printf '%s' "$input" | tr -d '\n' \
+    | sed -n 's/.*"cwd"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+fi
+[ -n "$cwd" ] && [ -d "$cwd" ] || cwd="$PWD"
+cd "$cwd" 2>/dev/null || exit 0
+
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0
+
+git_dir="$(git rev-parse --absolute-git-dir 2>/dev/null || true)"
+common_dir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+
+if [ -z "$git_dir" ] || [ -z "$common_dir" ] || [ "$git_dir" = "$common_dir" ]; then
+  echo "Worktree: none. Plain checkout at ${root:-$cwd}. Feature work needs a worktree session; base-branch work stays here."
+  exit 0
+fi
+
+branch="$(git symbolic-ref --short -q HEAD 2>/dev/null || true)"
+log="$git_dir/worktree-setup.log"
+
+setup="none declared"
+if [ -f "$root/Makefile" ] && grep -q '^worktree-setup:' "$root/Makefile"; then
+  if (cd "$root" && WORKTREE_MAIN="$(dirname "$common_dir")" WORKTREE_PATH="$root" \
+        WORKTREE_BRANCH="$branch" make worktree-setup) >"$log" 2>&1 </dev/null; then
+    setup="ran make worktree-setup"
+  else
+    setup="FAILED, see $log"
+  fi
+fi
+
+echo "Worktree: $root on ${branch:-detached HEAD}. Setup: $setup. Name the branch for the task before the first commit."
+exit 0

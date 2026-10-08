@@ -1,0 +1,8 @@
+{
+  "name": "worktree-setup",
+  "version": "0.1.0",
+  "description": "Worktree sessions. At session start, tells the agent whether it is in a linked worktree and runs the repo's make worktree-setup target when the repo declares one.",
+  "author": {
+    "name": "mr-rob0to"
+  }
+}

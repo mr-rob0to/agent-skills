@@ -10,13 +10,13 @@ PLUGINS := $(if $(PLUGIN),$(PLUGIN),$(notdir $(patsubst %/,%,$(wildcard plugins/
 
 check: lint-identifiers $(addprefix plugin/,$(PLUGINS)) validate
 
-# One plugin: shellcheck over every executable under its skills/, then its own
-# bats suite, run from the plugin's folder.
+# One plugin: shellcheck over every executable under its skills/ and hooks/,
+# then its own bats suite, run from the plugin's folder.
 $(addprefix plugin/,$(PLUGINS)): plugin/%:
 	@[ -d "plugins/$*" ] || { echo "finding: no plugin folder plugins/$*" >&2; exit 2; }
-	@if [ -d "plugins/$*/skills" ]; then \
-	  find "plugins/$*/skills" -type f -perm -u+x -exec shellcheck -s bash {} +; \
-	fi
+	@for d in skills hooks; do \
+	  [ ! -d "plugins/$*/$$d" ] || find "plugins/$*/$$d" -type f -perm -u+x -exec shellcheck -s bash {} + || exit 1; \
+	done
 	@if ls "plugins/$*"/tests/*.bats >/dev/null 2>&1; then \
 	  cd "plugins/$*" && $(BATS) tests; \
 	else \
